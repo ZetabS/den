@@ -58,7 +58,7 @@ Communication on PR comments or request changes must be purely technical, object
 
 ## Merging Pull-Requests
 
-PRs automatically run our `just ci-deep` tests.
+PRs automatically run our `just ci` tests.
 
 Review the design and code changes, try to think how these changes will impact Den. Make sure there's nothing suspicious and that code is understandable for you and other maintainers, ask for help if needed.
 
@@ -66,7 +66,7 @@ Communicate with contributors to have a satisfying and best possible solution. W
 
 When code is OK. Send a GitHub PR Approval.
 
-Use the `allow-ci` so all integration tests are run on the branch.
+Use the `allow-ci` so **all** integration tests are run on the branch.
 
 If you think the branch might have some performance impact on Den, use `allow-bench` tag to run benchmarking.
 
@@ -94,6 +94,9 @@ We use GitHub Releases, create a Draft for next release as soon as we have publi
 The draft serves so we can keep adding _Release Notes_
 before we forget about things that **need** to be
 communicated to users.
+
+Also, whenever a breaking change is merged in master, be sure to create a `heads-up` tagged GH discussion about it.
+Post to Matrix and Zulip channels, so that people using main can know about the change.
 
 ### Publish Release
 
