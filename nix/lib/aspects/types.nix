@@ -199,8 +199,50 @@ let
       merge =
         loc: defs:
         let
-          listDefs = builtins.filter (d: builtins.isList d.value) defs;
-          policyDefs = builtins.filter (d: builtins.isAttrs d.value && d.value.__isPolicy or false) defs;
+          # Normalize __contentValues wrappers (from aspectContentType) that
+          # contain parametric functions.  Without this, the wrapper merges
+          # through aspectSubmodule and the function is buried as a freeform
+          # key.  Extract the function so existing dispatch handles it.
+          isContentWrapper = d: builtins.isAttrs d.value && d.value ? __contentValues && !(d.value ? __fn);
+          nameFromProvider =
+            v:
+            let
+              prov = v.__provider or [ ];
+            in
+            if prov != [ ] then lib.last prov else null;
+          unwrapContent =
+            d:
+            let
+              fns = builtins.filter (
+                cv:
+                lib.isFunction cv.value
+                && (
+                  let
+                    args = builtins.functionArgs cv.value;
+                  in
+                  args != { } && !(args ? config) && !(args ? options)
+                )
+              ) d.value.__contentValues;
+              provName = nameFromProvider d.value;
+            in
+            if builtins.length fns == 1 then
+              d // { value = (builtins.head fns).value; }
+            else if provName != null then
+              # Preserve identity: inject name and provider chain from
+              # __provider so aspectSubmodule.merge produces a meaningful
+              # identity instead of an anonymous include index.
+              d
+              // {
+                value = d.value // {
+                  name = provName;
+                  meta.provider = lib.init d.value.__provider;
+                };
+              }
+            else
+              d;
+          defs' = map (d: if isContentWrapper d then unwrapContent d else d) defs;
+          listDefs = builtins.filter (d: builtins.isList d.value) defs';
+          policyDefs = builtins.filter (d: builtins.isAttrs d.value && d.value.__isPolicy or false) defs';
         in
         # Policy list (from policy.when/policy.for with list input) — pass through as-is.
         if listDefs != [ ] then
@@ -212,11 +254,11 @@ let
           p // { name = p.name or (lib.last loc); }
         else
           let
-            parametrics = builtins.filter (d: isParametricWrapper d.value) defs;
+            parametrics = builtins.filter (d: isParametricWrapper d.value) defs';
           in
           if parametrics != [ ] then
             let
-              nonParametrics = builtins.filter (d: !isParametricWrapper d.value) defs;
+              nonParametrics = builtins.filter (d: !isParametricWrapper d.value) defs';
             in
             # Single wrapper with no other defs: return wrapper directly.
             # Avoid baseType.merge here — it triggers a full aspectSubmodule evaluation
@@ -245,7 +287,7 @@ let
               )
           else
             let
-              nonParametrics = builtins.filter (d: !isParametricWrapper d.value) defs;
+              nonParametrics = builtins.filter (d: !isParametricWrapper d.value) defs';
               # Error on conflicting __functor defs (callable aspect factories).
               # Two factories at the same path is ambiguous — can't be mechanically composed.
               explicitFunctors = builtins.filter (
@@ -374,7 +416,14 @@ let
     lib.types.submodule (
       { name, config, ... }:
       {
-        freeformType = lib.types.lazyAttrsOf (aspectKeyType typeCfg);
+        freeformType = lib.types.lazyAttrsOf (
+          aspectKeyType (
+            typeCfg
+            // {
+              providerPrefix = (typeCfg.providerPrefix or [ ]) ++ [ config.name ];
+            }
+          )
+        );
         imports = [
           (lib.mkAliasOptionModule [ "_" ] [ "provides" ])
           (den.schema.aspect or { })
