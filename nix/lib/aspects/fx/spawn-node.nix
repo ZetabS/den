@@ -9,6 +9,7 @@
 { lib, den }:
 let
   inherit (import ./assemble-pipes.nix { inherit lib den; }) assemblePipes;
+  inherit (import ./handlers/route.nix { inherit lib; }) routeKey;
   pipeNamesSet = lib.genAttrs (builtins.attrNames (den.quirks or { })) (_: true);
 in
 {
@@ -114,9 +115,30 @@ in
       # 4. Phases 1-3 over the spawned subtree; class isolation -> one class emitted.
       phase1 = wrapPerScope parentState.ctx augmented mergedClassImports;
       phase2 = applyProvides parentState.ctx augmented (result.state.scopedProvides null) phase1;
+      # Parent-pipeline routes sourced inside the spawned subtree must apply
+      # here too: the spawn re-emits class content at the same scope ids but
+      # never re-fires schema policies, so without them a user-schema route
+      # (homeLinux->homeManager) never fires and the content drops.
+      # Dedup against the spawn's own registrations — an aspect-borne route
+      # can register in both pipelines, and a duplicated path != [] simple
+      # route would re-nest content in fresh keyless wrappers and conflict
+      # at the target.
+      spawnRoutes = result.state.scopedRoutes null;
+      parentSubtreeRoutes = lib.filterAttrs (sid: _: isInSubtree sid) parentState.scopedRoutes;
+      mergedSpawnRoutes =
+        spawnRoutes
+        // lib.mapAttrs (
+          sid: parentRoutes:
+          let
+            spawnHere = spawnRoutes.${sid} or [ ];
+            spawnKeys = lib.genAttrs (map (routeKey sid) spawnHere) (_: true);
+            freshParent = builtins.filter (r: !(spawnKeys ? ${routeKey sid r})) parentRoutes;
+          in
+          freshParent ++ spawnHere
+        ) parentSubtreeRoutes;
+
       phase3 =
-        applyRoutes selfRef parentState.ctx augmented spawnRoot mergedScopeParent
-          (result.state.scopedRoutes null)
+        applyRoutes selfRef parentState.ctx augmented spawnRoot mergedScopeParent mergedSpawnRoutes
           phase2;
 
       # Restrict extraction to the spawned subtree (spawnRoot + descendants).

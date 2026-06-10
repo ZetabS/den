@@ -8,14 +8,30 @@ let
   inherit (den.lib.aspects.fx) identity;
   inherit (import ./normalize.nix { inherit lib den; }) wrapChild isMeaningfulName;
 
-  nameAnon =
-    state: idx: ctxId:
+  nameIndexed =
+    state: base: idx: ctxId:
     let
       chain = ((state.scopedIncludesChain or (_: { })) null).${state.currentScope} or [ ];
       parent = if chain == [ ] then "<root>" else lib.last chain;
       suffix = if ctxId != null then "/${ctxId}" else "";
     in
-    "${parent}/<anon>:${toString idx}${suffix}";
+    "${parent}/${base}:${toString idx}${suffix}";
+
+  nameAnon = state: nameIndexed state "<anon>";
+
+  # Synthetic names like "<when>" repeat per constructor; index them so
+  # siblings don't dedup-collide at the gate.
+  inherit (den.lib.aspects) isSyntheticName;
+
+  # Wrap a computation in chain-push/chain-pop of the given identity.
+  chainWrap =
+    nodeIdentity: shouldPush: comp:
+    if shouldPush then
+      fx.bind (fx.send "chain-push" { identity = nodeIdentity; }) (
+        _: fx.bind comp (result: fx.bind (fx.send "chain-pop" null) (_: fx.pure result))
+      )
+    else
+      comp;
 
   propagateScope =
     parentScopeHandlers: parentCtxId: child:
@@ -76,9 +92,14 @@ let
       fx.bind fx.effects.state.get (
         state:
         let
+          childName = withScope.name or "<anon>";
           child =
-            if !skipNameAnon && !(isMeaningfulName (withScope.name or "<anon>")) then
+            if skipNameAnon then
+              withScope
+            else if !(isMeaningfulName childName) then
               withScope // { name = nameAnon state idx (withScope.__ctxId or null); }
+            else if isSyntheticName childName then
+              withScope // { name = nameIndexed state childName idx (withScope.__ctxId or null); }
             else
               withScope;
         in
@@ -158,5 +179,5 @@ let
     fx.seq (map (c: fx.send "register-constraint" (c // { inherit owner; })) allConstraints);
 in
 {
-  inherit emitIncludes registerConstraints;
+  inherit emitIncludes registerConstraints chainWrap;
 }

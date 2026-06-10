@@ -11,7 +11,7 @@
 let
   inherit (den.lib) fx;
   inherit (den.lib.aspects.fx) identity;
-  inherit (den.lib.aspects.fx.aspect) emitIncludes;
+  inherit (den.lib.aspects.fx.aspect) emitIncludes chainWrap;
   inherit (den.lib.schemaUtil) schemaEntityKindsSet;
   inherit (import ./state-util.nix) scopedAppend;
 
@@ -124,6 +124,17 @@ let
     }
     // entityStubs;
 
+  # Chain-push the conditional around payload emission so sibling guards'
+  # anonymous payloads get distinct names instead of dedup-colliding.
+  emitGuardedAspects =
+    condNode:
+    chainWrap (identity.key condNode) true (
+      emitIncludes {
+        __parentScopeHandlers = condNode.__scopeHandlers or null;
+        __parentCtxId = condNode.__ctxId or null;
+      } condNode.meta.aspects
+    );
+
   # Defer a conditional for re-evaluation at entity boundary.
   deferConditional =
     condNode:
@@ -173,13 +184,7 @@ in
               };
               pass = condNode.meta.guard guardCtx;
             in
-            if pass then
-              emitIncludes {
-                __parentScopeHandlers = condNode.__scopeHandlers or null;
-                __parentCtxId = condNode.__ctxId or null;
-              } condNode.meta.aspects
-            else
-              deferConditional condNode
+            if pass then emitGuardedAspects condNode else deferConditional condNode
           )
         );
         inherit state;
@@ -248,19 +253,14 @@ in
                             fx.bind acc (
                               prev:
                               if pass then
-                                fx.bind
-                                  (emitIncludes {
-                                    __parentScopeHandlers = condNode.__scopeHandlers or null;
-                                    __parentCtxId = condNode.__ctxId or null;
-                                  } condNode.meta.aspects)
-                                  (
-                                    results:
-                                    fx.pure {
-                                      emitted = prev.emitted ++ results;
-                                      failed = prev.failed;
-                                      progressed = true;
-                                    }
-                                  )
+                                fx.bind (emitGuardedAspects condNode) (
+                                  results:
+                                  fx.pure {
+                                    emitted = prev.emitted ++ results;
+                                    failed = prev.failed;
+                                    progressed = true;
+                                  }
+                                )
                               else
                                 fx.pure {
                                   inherit (prev) emitted progressed;

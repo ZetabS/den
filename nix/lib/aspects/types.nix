@@ -25,6 +25,11 @@ let
   isMeaningfulName =
     name: name != "<anon>" && name != "<function body>" && !(lib.hasPrefix "[definition " name);
 
+  # Constructor-stamped names like "<when>" repeat across instances; the
+  # child walk indexes them and the gate never keys dedup on them. Both
+  # sites must share this predicate or naming and dedup silently desync.
+  isSyntheticName = name: lib.hasPrefix "<" name && lib.hasSuffix ">" name;
+
   aspectType =
     typeCfg:
     let
@@ -484,14 +489,45 @@ let
                           bv
                       ) b;
                     subForwarded = builtins.foldl' deepMerge { } subAttrVals;
-                  in
-                  subForwarded
-                  // {
-                    __contentValues = defsForKey;
-                    __provider = (typeCfg.providerPrefix or [ ]) ++ [
+                    # Multi-def counterpart of annotatedMerged: tag forwarded
+                    # children recursively with __provider, else navigation
+                    # through a multi-def key yields raw children that get
+                    # anon-renamed per inclusion path and double-emit class
+                    # content. Recursive (unlike annotatedMerged) because
+                    # subForwarded never re-enters aspectContentType per
+                    # level. Name-based guards come first — forcing a
+                    # registered class value mid-merge can re-enter the flake
+                    # fixpoint (#580; see isNestedKey); only unregistered
+                    # namespace keys (forced by navigation anyway) get WHNF'd.
+                    annotateDeep =
+                      provPath: attrs:
+                      lib.mapAttrs (
+                        ck: cv:
+                        let
+                          childPath = provPath ++ [ ck ];
+                        in
+                        if
+                          !(lib.hasPrefix "__" ck)
+                          && !(classReg ? ${ck})
+                          && !(pipeReg ? ${ck})
+                          && !(structuralKeysSet ? ${ck})
+                          && builtins.isAttrs cv
+                          && !(cv ? __provider)
+                          && !(cv ? __contentValues)
+                        then
+                          annotateDeep childPath cv // { __provider = childPath; }
+                        else
+                          cv
+                      ) attrs;
+                    provBase = (typeCfg.providerPrefix or [ ]) ++ [
                       keyName
                       k
                     ];
+                  in
+                  annotateDeep provBase subForwarded
+                  // {
+                    __contentValues = defsForKey;
+                    __provider = provBase;
                   }
               );
           # Single-function content wrappers need __functor so the wrapper is
@@ -709,5 +745,6 @@ in
     isParametricWrapper
     isSubmoduleFn
     isMeaningfulName
+    isSyntheticName
     ;
 }
