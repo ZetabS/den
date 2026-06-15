@@ -6,7 +6,7 @@
 let
   # Structural keys are always handled by the pipeline itself — not
   # dispatched as class or nested aspect keys.
-  structuralKeysSet = lib.genAttrs [
+  builtinStructuralKeys = [
     "name"
     "description"
     "meta"
@@ -29,7 +29,10 @@ let
     "__providesForwarded"
     "_module"
     "_"
-  ] (_: true);
+  ];
+
+  # User-extensible reserved keys via den.reservedKeys option.
+  structuralKeysSet = lib.genAttrs (builtinStructuralKeys ++ (den.reservedKeys or [ ])) (_: true);
 
   # Schema registry for key classification.
   # Top-level den.classes lives outside den.schema, breaking

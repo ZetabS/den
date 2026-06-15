@@ -83,7 +83,6 @@
           state = {
             currentScope = "__test";
             scopedConstraintRegistry = _: { };
-            scopedConstraintFilters = _: { };
             scopedIncludesChain = _: { };
           };
         } comp;
@@ -104,7 +103,6 @@
           state = {
             currentScope = "__test";
             scopedConstraintRegistry = _: { };
-            scopedConstraintFilters = _: { };
             scopedIncludesChain = _: { };
           };
         } comp;
@@ -141,7 +139,6 @@
           state = {
             currentScope = "__test";
             scopedConstraintRegistry = _: { };
-            scopedConstraintFilters = _: { };
             scopedIncludesChain = _: { };
           };
         } comp;
@@ -255,8 +252,13 @@
         } comp;
       in
       {
-        # root + keep = 2 paths in pathSet, drop is tombstoned and excluded
-        expr = builtins.length (builtins.attrNames ((result.state.pathSet) null));
+        # root + keep = 2 paths in the membership set (union of per-scope
+        # buckets); drop is tombstoned and excluded.
+        expr = builtins.length (
+          builtins.attrNames (
+            den.lib.aspects.fx.identity.flattenPathSetByScope ((result.state.pathSetByScope) null)
+          )
+        );
         expected = 2;
       }
     );
@@ -390,7 +392,6 @@
             currentScope = "__test";
             scopedIncludesChain = _: { };
             scopedConstraintRegistry = _: { };
-            scopedConstraintFilters = _: { };
           };
         } comp;
       in
@@ -432,7 +433,6 @@
             currentScope = "__test";
             scopedIncludesChain = _: { };
             scopedConstraintRegistry = _: { };
-            scopedConstraintFilters = _: { };
           };
         } comp;
       in
@@ -474,7 +474,6 @@
             currentScope = "__test";
             scopedIncludesChain = _: { };
             scopedConstraintRegistry = _: { };
-            scopedConstraintFilters = _: { };
           };
         } comp;
       in
@@ -510,7 +509,6 @@
             currentScope = "__test";
             scopedIncludesChain = _: { };
             scopedConstraintRegistry = _: { };
-            scopedConstraintFilters = _: { };
           };
         } comp;
       in
@@ -552,7 +550,6 @@
             currentScope = "__test";
             scopedIncludesChain = _: { };
             scopedConstraintRegistry = _: { };
-            scopedConstraintFilters = _: { };
           };
         } comp;
       in

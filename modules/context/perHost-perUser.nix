@@ -1,45 +1,41 @@
-# DEPRECATED: scheduled for removal after first stable release post-fx-pipeline merge.
-# Migration: use den.schema.host / den.schema.user directly.
-# Deprecated context-level guards.
-# Under handler-based resolution, bind.fn resolves each arg independently.
-# Optional args with no handler are skipped (nix-effects c7931d7), so
-# the function body can detect context level by checking which keys
-# were resolved.
+# DEPRECATED context guards — kept as a thin compatibility shim.
+#
+# `den.lib.perHost` / `perUser` / `perHome` shipped in earlier releases. They
+# are RESTORED here as aliases over the current binding rule so existing configs
+# keep evaluating (and get a deprecation warning steering them to plain
+# functions). Migration: use a plain function — `({ host, ... }: { ... })`.
+#
+# IMPORTANT — semantics changed (this is the #609 fix): the old shim returned
+# `{}` whenever a deeper context key was present (a self-suppressing emulation
+# of cross-scope deferral). That behavior was the bug the binding-half rewrite
+# removed. The restored shim drops the self-suppression: an entity-kind arg now
+# binds once at the emitting scope if in-ctx, fans out class-locally over the
+# scope's descendants otherwise, and is inert if misplaced — exactly as a plain
+# `{ host, ... }:` function does. So `den.lib.perHost f` is now an alias for
+# `{ host, ... }: f { inherit host; }`, not the old suppress-at-deeper-scope
+# guard. Configs relying on the old silent suppression were relying on #609.
 { lib, ... }:
 let
-  # Known context keys. Keys not in the required set are declared as
-  # optional — if their handlers exist (deeper level), the function
-  # detects the extras and returns {} (no-op).
-  allContextKeys = [
-    "host"
-    "user"
-    "home"
-  ];
-
+  # Build a parametric wrapper requiring exactly `requiredKeys` (all required —
+  # no optional "extra" keys, hence no self-suppression). The fx bind handler
+  # binds these per the current rule and applies `__fn` with the resolved args.
   perCtx =
     requiredKeys: aspect:
     let
-      reqKeysSorted = builtins.sort builtins.lessThan requiredKeys;
-      extraKeys = builtins.filter (k: !(builtins.elem k reqKeysSorted)) allContextKeys;
-      # Required keys as required (false), extra keys as optional (true)
-      funcArgs = lib.genAttrs reqKeysSorted (_: false) // lib.genAttrs extraKeys (_: true);
+      reqSorted = builtins.sort builtins.lessThan requiredKeys;
     in
     lib.warn
-      "den.lib.perCtx [${lib.concatStringsSep "," reqKeysSorted}] is deprecated — use a plain function ({ ${lib.concatStringsSep ", " reqKeysSorted}, ... }: ...) instead; handler-based resolution resolves context args automatically"
+      "den.lib.perCtx [${lib.concatStringsSep "," reqSorted}] is deprecated — use a plain function ({ ${lib.concatStringsSep ", " reqSorted}, ... }: ...) instead; handler-based resolution binds context args automatically"
       {
+        __args = lib.genAttrs reqSorted (_: false);
         __fn =
           resolvedArgs:
-          let
-            # If any extra key was resolved (handler exists), we're at a deeper level
-            hasExtras = builtins.any (k: resolvedArgs ? ${k}) extraKeys;
-          in
-          if hasExtras then
-            { }
-          else if lib.isFunction aspect && !builtins.isAttrs aspect then
-            aspect (lib.intersectAttrs (lib.genAttrs reqKeysSorted (_: null)) resolvedArgs)
+          if lib.isFunction aspect && !builtins.isAttrs aspect then
+            aspect (lib.intersectAttrs (lib.genAttrs reqSorted (_: null)) resolvedArgs)
           else
             aspect;
-        __args = funcArgs;
+        name = aspect.name or "<perCtx>";
+        meta = aspect.meta or { };
       };
 
   perHost = perCtx [ "host" ];

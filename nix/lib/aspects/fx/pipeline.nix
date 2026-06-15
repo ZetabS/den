@@ -46,7 +46,6 @@ let
     // handlers.includeHandler
     // handlers.checkDedupHandler
     // handlers.ctxSeenHandler
-    // identity.pathSetHandler
     // identity.collectPathsHandler
     // handlers.registerAspectPolicyHandler
     // handlers.registerRouteHandler
@@ -134,24 +133,25 @@ let
   defaultState = {
     # --- Flat state (global by design, not scoped) ---
     seen = _: { };
-    pathSet = _: { };
-    # Per-scope path set: scopeId → { basePathKey → true }. Byproduct of the
-    # structural walk, bucketed by the scope that owns each node. Powers the
-    # projected (in-context) hasAspect. Thunked to survive per-step deepSeq.
+    # Per-scope path set: scopeId → { pathKey → true } (both the ctx-qualified
+    # nodeKey and the base key). Byproduct of the structural walk, bucketed by
+    # the scope that owns each node — the SINGLE membership record. Powers the
+    # projected (in-context) hasAspect and the scope-restricted guard membership
+    # check (#613); the flat scope-agnostic view is its union
+    # (identity.flattenPathSetByScope). Thunked to survive per-step deepSeq.
     pathSetByScope = _: { };
+    # Full resolved nodes keyed by unique identity, for entity.aspects.
+    resolvedNodes = _: { };
 
     # --- Scope-partitioned output state (handlers write here) ---
     scopedClassImports = _: { };
     scopedAspectPolicies = _: { };
-    # Pre-merged flat view (avoid O(S) rebuild per installPolicies call).
-    flatAspectPolicies = { };
     scopedDeferredIncludes = _: { };
     scopedDeferredConditionals = _: { };
     scopedIncludesChain = _: { };
     scopedConstraintRegistry = _: { };
-    scopedConstraintFilters = _: { };
-    # Pre-merged flat views (avoid O(S) rebuild per check-constraint call).
-    flatConstraintRegistry = { };
+    # Flat filter list only (excludes/substitutes are entity-scoped via
+    # scopedConstraintRegistry; filters have no scoped registry).
     flatConstraintFilters = [ ];
     scopedRoutes = _: { };
     scopedInstantiates = _: { };
@@ -170,6 +170,15 @@ let
     currentScope = "__unscoped";
     scopeContexts = _: { };
     scopeParent = _: { };
+    # Spec→scope link (the entity scope is recorded, never name-infix matched):
+    # when resolve.to creates an entity scope (push-scope with entityKind set), record
+    # the scope it created keyed by (parentScope, entity id_hash). An instantiate
+    # spec — registered at the SAME parent scope, carrying the same entity record
+    # (hence id_hash) — looks its entity scope up directly. Key combines parent +
+    # id_hash because id_hash is context-free (kind+name, NOT ancestry), so two
+    # same-name entities on different systems share an id_hash but have distinct
+    # parent (system=…) scopes. See resolve.nix entityScopeFor.
+    scopeByEntity = _: { };
 
     # --- Policy dispatch tracking ---
     firedPolicyNames = _: { };

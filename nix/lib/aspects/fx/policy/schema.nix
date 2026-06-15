@@ -16,6 +16,8 @@
   mkSupplementalResolution,
 }:
 let
+  inherit (import ../handlers/constraint.nix { inherit lib den; }) scopedConstraintsForScope;
+
   # Determine target entity kind from a schema effect.
   resolveTargetKind =
     entityKind: schemaEffect:
@@ -56,26 +58,39 @@ let
 
       # In-context `.hasAspect` answers PROJECTED membership — what's delivered
       # into this scope (incl. `provides`), not the structural registry tree. The
-      # owning host's production run already bucketed each scope's path set under
-      # `__pathSetByScope`. The lookup is pure and forced lazily (at a class-module
-      # `mkIf`), so it never re-enters the resolve that produced it — except from
-      # an `includes` position, which forces the host's own in-flight
-      # `__resolveResult` and recurses. So: don't decide includes from it.
+      # owning host's production run bucketed each scope's path set under
+      # `__pathSetByScope`, RE-KEYED by entity identity (`id_hash`) at the entity
+      # surface (entities/_types.nix:pathSetByScopeOption). The lookup is pure and
+      # forced lazily (at a class-module `mkIf`), so it never re-enters the resolve
+      # that produced it — except from an `includes` position, which forces the
+      # host's own in-flight `__resolveResult` and recurses. So: don't decide
+      # includes from it.
       #
-      # Key by entity-kind bindings only: enrichment may add non-entity keys (e.g.
-      # `system`) to the ctx, but buckets are keyed by entity scope — restricting
-      # here keeps the lookup key matched. Only `.hasAspect` is swapped, and
-      # `mkScopeId` keys off `.name`, so the scope ids are otherwise unperturbed.
+      # Per the projected-hasAspect spec, EVERY in-context entity-kind binding
+      # answers membership at the ACTIVE (consuming) scope — "is X delivered into
+      # THIS scope" — keyed by ONE shared scope id, not each entity's own. After
+      # the id_hash re-key the active scope's bucket is the consuming (target)
+      # entity's id_hash (the deepest scope in ctx). Keying per-entity made
+      # `host.hasAspect` read the host's OWN bucket, blinding it to aspects the
+      # host delivers DOWN to its users via `provides.to-users` — those resolve
+      # under the user scope, so only the active (consuming) bucket holds them.
       overrideKinds = builtins.filter (
         k: schemaEntityKindsSet ? ${k} && builtins.isAttrs (rawScopedCtx.${k} or null)
       ) (builtins.attrNames rawScopedCtx);
-      scopeId = mkScopeId (lib.getAttrs overrideKinds rawScopedCtx);
-      # Host run buckets every user scope; a host-less entity uses its own.
-      ownerPathSet =
-        rawScopedCtx.host.__pathSetByScope or rawScopedCtx.${targetKind}.__pathSetByScope or { };
+      # Owner = topmost ancestor along targetKind's parent chain whose ctx binding
+      # carries a production bucket; falls back to the target itself. (Generic form
+      # of "the host run buckets every descendant scope".)
+      ownerChain = den.lib.aspects.fx.argClass.ancestorChain den.schema targetKind;
+      ownerKind = lib.findFirst (
+        k: builtins.isAttrs (rawScopedCtx.${k} or null) && rawScopedCtx.${k} ? __pathSetByScope
+      ) targetKind (lib.reverseList ownerChain);
+      ownerPathSet = rawScopedCtx.${ownerKind}.__pathSetByScope or { };
+      # The active scope = the consuming (target) entity's bucket — the deepest
+      # scope in ctx. Shared by every binding so `host`/`user`/etc. all answer
+      # "delivered into THIS scope", per the spec.
       projected = den.lib.aspects.mkProjectedHasAspect {
         pathSetByScope = ownerPathSet;
-        inherit scopeId;
+        key = rawScopedCtx.${targetKind}.id_hash or null;
       };
       scopedCtx =
         rawScopedCtx // lib.genAttrs overrideKinds (k: rawScopedCtx.${k} // { hasAspect = projected; });
@@ -168,23 +183,32 @@ let
       entityKinds = den.lib.schemaUtil.schemaEntityKinds;
       latePolicies = lib.filterAttrs (
         name: policy:
+        let
+          policyArgs = builtins.functionArgs (policy.fn or policy);
+          requiredEntityArgs = builtins.filter (
+            k: builtins.elem k entityKinds && !(policyArgs.${k} or false)
+          ) (builtins.attrNames policyArgs);
+        in
         !(alreadyFired ? ${name})
         && !(parentFiredPolicies ? ${name})
-        && (
-          let
-            policyArgs = builtins.functionArgs (policy.fn or policy);
-            requiredEntityArgs = builtins.filter (
-              k: builtins.elem k entityKinds && !(policyArgs.${k} or false)
-            ) (builtins.attrNames policyArgs);
-          in
-          requiredEntityArgs == [ ] || builtins.elem sib.targetKind requiredEntityArgs
-        )
+        # `self`-guarded policies fire only at their own registration scope
+        # (during the initial dispatch); they must never re-fire at descendant
+        # scopes via the fan-out. This is what makes `{ self, ... }:` mean
+        # "fire once here", as opposed to `{ <kind>, ... }:` which fans.
+        && !(policyArgs ? self)
+        && (requiredEntityArgs == [ ] || builtins.elem sib.targetKind requiredEntityArgs)
       ) allAspectPolicies;
     in
     fx.bind fx.effects.state.get (
       state:
       let
-        constraintRegistry = state.flatConstraintRegistry or { };
+        # Entity-scoped (NOT fleet-wide) — a sibling entity's policy-exclude must
+        # not filter this sibling's late policies (#613 analog).
+        # Scope to the SIBLING being dispatched (`sib.scopeId`), not the current
+        # (parent) scope: the late dispatch runs at the parent but emits FOR the
+        # child sibling, and the relevant excludes (e.g. den.schema.flake-system.
+        # excludes) register at the sibling/descendant scope, not an ancestor.
+        constraintRegistry = scopedConstraintsForScope state sib.scopeId;
         isExcluded = name: builtins.any (e: e.type == "exclude") (constraintRegistry.${name} or [ ]);
         filteredPolicies = lib.filterAttrs (name: _: !isExcluded name) latePolicies;
         resolveCtx = sib.scopedCtx // {

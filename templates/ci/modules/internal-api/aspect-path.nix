@@ -228,17 +228,19 @@
           param
         ];
         den.aspects.leaf.nixos = { };
-        den.aspects.param = den.lib.perHost (
-          { host }:
+        den.aspects.param =
+          { host, ... }:
           {
             nixos = { };
-          }
-        );
+          };
 
         expr = trace "nixos" den.aspects.role;
-        # perHost wrapper defers when no host context is available in the
-        # trace pipeline (ctx = {}). The deferred stub shows the name but
-        # no inner children.
+        # §6: the trace pipeline runs at the ROOT scope (ctx = {}). A plain
+        # { host, ... } aspect there destructures an entity kind that is neither
+        # in-ctx nor a descendant → misplaced → inert (emits no nixos content).
+        # It still appears in the trace by NAME as a childless node `["param"]`:
+        # trace visibility tracks the include graph, not emission. (The prior
+        # cross-scope deferral carrier is gone, but structural visibility remains.)
         expected.trace = [
           "role"
           [ "leaf" ]

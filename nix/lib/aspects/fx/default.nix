@@ -14,4 +14,15 @@
   pipeline = import ./pipeline.nix { inherit lib den; };
   wrapClasses = import ./wrap-classes.nix { inherit lib den; };
   keyClassification = import ./key-classification.nix { inherit lib den; };
+  argClass = import ./arg-class.nix { inherit lib den; };
+  edgeTrace = import ./edge-trace.nix { inherit lib den; };
+  edges = {
+    edge = import ./edges/edge.nix { inherit lib; };
+    parity = import ./edges/parity.nix { inherit lib; };
+    pi = import ./edges/pi.nix { inherit lib; };
+    toposort = import ./edges/toposort.nix { inherit lib; };
+    materialize = import ./edges/materialize.nix { inherit lib den; };
+    materializeUnified = import ./edges/materialize-unified.nix { inherit lib den; };
+    instantiateSubtree = import ./edges/instantiate-edges.nix { inherit lib den; };
+  };
 }

@@ -13,6 +13,10 @@ let
   # Composed: aspectPath → pathKey in one call.
   key = a: pathKey (aspectPath a);
 
+  # Base identity without the {ctxId} instance suffix: provider chain + name.
+  # The pretty, stable fully-qualified name (e.g. "roles/workstation").
+  baseKey = a: pathKey ((a.meta.provider or [ ]) ++ [ (a.name or "<anon>") ]);
+
   # True when an identity string refers to an anonymous/unresolved node.
   isAnonIdentity =
     id:
@@ -20,15 +24,6 @@ let
 
   # Strip the {ctxId} suffix from an identity, yielding the base identity.
   stripCtxSuffix = id: lib.head (lib.splitString "/{" id);
-
-  toPathSet =
-    paths:
-    builtins.listToAttrs (
-      builtins.map (p: {
-        name = pathKey p;
-        value = true;
-      }) paths
-    );
 
   tombstone = resolved: extra: {
     name = "~${resolved.name or "<anon>"}";
@@ -42,32 +37,40 @@ let
     includes = [ ];
   };
 
+  # The flat, scope-agnostic membership set: union of every per-scope bucket.
+  # `pathSetByScope` is the single source of truth; consumers that don't care
+  # about scope (structural hasAspect, capture) derive the flat view from it
+  # instead of a separately-maintained flat field.
+  flattenPathSetByScope = pbs: lib.foldl' (a: b: a // b) { } (builtins.attrValues pbs);
+
   collectPathsHandler = {
     "resolve-complete" =
       { param, state }:
       let
         isExcluded = param.meta.excluded or false;
+        # The entity root (host/user/home) carries __entityKind. It is indexed
+        # in pathSetByScope but excluded from resolvedNodes — an entity is not
+        # one of its own aspects.
+        isEntityRoot = param ? __entityKind;
         path = aspectPath param;
-        key = pathKey path;
+        nodeKey = pathKey path;
         # Also store base path (without ctxId) so hasAspect can match
         # without needing to know the specific context instance.
-        basePath = (param.meta.provider or [ ]) ++ [ (param.name or "<anon>") ];
-        baseKey = pathKey basePath;
+        nodeBaseKey = baseKey param;
       in
       {
         resume = param;
         state =
           state
           // lib.optionalAttrs (!isExcluded) {
-            pathSet =
-              _:
-              (state.pathSet or (_: { })) null
-              // {
-                ${key} = true;
-              }
-              // lib.optionalAttrs (baseKey != key) {
-                ${baseKey} = true;
-              };
+            # The per-scope path set is the SINGLE membership record. Each node is
+            # indexed under its currentScope by BOTH the ctx-qualified nodeKey and
+            # the base key (without {ctxId}). The flat, scope-agnostic set some
+            # consumers need is just the union of these buckets
+            # (flattenPathSetByScope) — no separate flat field. Conditional guards
+            # read a scope-restricted union (currentScope + ancestors, #613); the
+            # entity-surface projected hasAspect reads one bucket by id_hash and
+            # only the base key (the extra nodeKey entry is inert there).
             pathSetByScope =
               _:
               let
@@ -77,20 +80,28 @@ let
               in
               prev
               // {
-                ${scope} = scopeSet // {
-                  ${baseKey} = true;
-                };
+                ${scope} =
+                  scopeSet
+                  // {
+                    ${nodeKey} = true;
+                  }
+                  // lib.optionalAttrs (nodeBaseKey != nodeKey) {
+                    ${nodeBaseKey} = true;
+                  };
+              };
+          }
+          // lib.optionalAttrs (!isExcluded && !isEntityRoot) {
+            # Full resolved nodes keyed by unique (ctx-qualified) identity, for
+            # host.aspects. Stored behind the state thunk so a deepSeq of state
+            # never forces the node's class-content bodies (the lambda is WHNF);
+            # only reading host.aspects materializes name/meta/identity.
+            resolvedNodes =
+              _:
+              (state.resolvedNodes or (_: { })) null
+              // {
+                ${nodeKey} = param;
               };
           };
-      };
-  };
-
-  pathSetHandler = {
-    "get-path-set" =
-      { param, state }:
-      {
-        resume = (state.pathSet or (_: { })) null;
-        inherit state;
       };
   };
 
@@ -100,11 +111,11 @@ in
     aspectPath
     pathKey
     key
+    baseKey
     isAnonIdentity
     stripCtxSuffix
-    toPathSet
     tombstone
+    flattenPathSetByScope
     collectPathsHandler
-    pathSetHandler
     ;
 }

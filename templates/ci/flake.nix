@@ -29,5 +29,8 @@
     nix-effects.url = "github:denful/nix-effects/den";
     nix-effects.inputs.nixpkgs.follows = "nixpkgs";
     nix-effects.inputs.nix-unit.follows = "nix-unit";
+
+    gen-schema.url = "github:sini/gen-schema";
+    gen-schema.inputs.nixpkgs.follows = "nixpkgs";
   };
 }

@@ -32,11 +32,15 @@
     #  # This will append 42 into foo option for the {host} and for EVERY {host,user}
     #     ({ host, ... }: { nixos.foo = [ 42 ]; }) # DO-NOT-DO-THIS.
     #
-    #  # Instead try to be explicit if a function is intended for ONLY { host }
-    #     den.lib.perHost ({ host }: { nixos.foo = [ 42 ]; })
-    #  # Or for { host, user } ONLY:
-    #     den.lib.perUser ({ host, user }: { nixos.foo = [ 42 ]; })
-    #  # Or for standalone homes ({ home }) ONLY:
-    #     den.lib.perHome ({ home }: { homeManager.foo = [ 42 ]; })
+    #  # A plain function destructuring { host } binds host once at the host
+    #  # scope (nixos-class content emits there):
+    #     ({ host, ... }: { nixos.foo = [ 42 ]; })
+    #  # Destructuring { host, user } fans out over the host's users and emits
+    #  # on the host (one nixos contribution per user); the bound user is the
+    #  # arg source, not the output target. At user scope both args are in-ctx
+    #  # and it binds once:
+    #     ({ host, user, ... }: { nixos.foo = [ 42 ]; })
+    #  # Destructuring { home } binds home at standalone-home scope:
+    #     ({ home, ... }: { homeManager.foo = [ 42 ]; })
   ];
 }

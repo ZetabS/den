@@ -20,7 +20,6 @@ let
     // handlers.checkDedupHandler
     // handlers.constraintRegistryHandler
     // handlers.chainHandler
-    // den.lib.aspects.fx.identity.pathSetHandler
     // den.lib.aspects.fx.identity.collectPathsHandler
     // handlers.resolveHandler
     // handlers.compileHandler
@@ -65,7 +64,6 @@ let
     currentScope = "__test";
     scopedIncludesChain = _: { };
     scopedConstraintRegistry = _: { };
-    scopedConstraintFilters = _: { };
     paths = [ ];
   };
 in

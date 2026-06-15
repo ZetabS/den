@@ -9,19 +9,20 @@
 { lib, den }:
 let
   inherit (import ./assemble-pipes.nix { inherit lib den; }) assemblePipes;
+  inherit (import ./scope-walk.nix { inherit lib; }) subtreeScopes;
   inherit (import ./handlers/route.nix { inherit lib; }) routeKey;
+  inherit (import ./edges/materialize.nix { inherit lib den; }) assembleSpawnSubtree;
   pipeNamesSet = lib.genAttrs (builtins.attrNames (den.quirks or { })) (_: true);
 in
 {
-  # Phase helpers (wrapPerScope/applyProvides/applyRoutes) and the recursive
-  # nested-route resolver (selfRef) are injected to avoid a resolve.nix import
-  # cycle. mkPipeline + parentState are captured once per run; the inner
-  # { from, class, aspect, bindings } call materializes a single class.
+  # The phase-1 wrap (wrapPerScope) and the recursive nested-route resolver
+  # (selfRef) are injected to avoid a resolve.nix import cycle. mkPipeline +
+  # parentState are captured once per run; the inner { from, class, aspect,
+  # bindings } call materializes a single class. (provides + routes fold through
+  # materializeUnified inside assembleSpawnSubtree, so they are no longer injected.)
   mkSpawnNode =
     {
       wrapPerScope,
-      applyProvides,
-      applyRoutes,
       normalizeRoot,
       ctxFromHandlers,
       selfRef,
@@ -100,6 +101,8 @@ in
         // {
           ${spawnRoot} = from;
         };
+      mergedScopeIsolated =
+        (parentState.scopeIsolated or { }) // ((result.state.scopeIsolated or (_: { })) null);
 
       # 3. Re-derive pipes over merged state. hostConfigs = null: config-dependent
       #    stay deferred (via __configThunk); pipeline-parametric resolve eagerly.
@@ -112,19 +115,41 @@ in
         hostConfigs = null;
       });
 
-      # 4. Phases 1-3 over the spawned subtree; class isolation -> one class emitted.
-      phase1 = wrapPerScope parentState.ctx augmented mergedClassImports;
-      phase2 = applyProvides parentState.ctx augmented (result.state.scopedProvides null) phase1;
-      # Parent-pipeline routes sourced inside the spawned subtree must apply
-      # here too: the spawn re-emits class content at the same scope ids but
-      # never re-fires schema policies, so without them a user-schema route
-      # (homeLinux->homeManager) never fires and the content drops.
-      # Dedup against the spawn's own registrations — an aspect-borne route
-      # can register in both pipelines, and a duplicated path != [] simple
-      # route would re-nest content in fresh keyless wrappers and conflict
-      # at the target.
+      # The subtree-membership universe: the merged
+      # parent DAG keys ∪ the route-scope keys. WIDER than perScope: a route-only
+      # scope can sit on the subtree parent-chain without a class bucket. Both the
+      # parentSubtreeRoutes filter (below) and the final extraction (inside
+      # assembleSpawnSubtree, via Π.allScopeIds) walk over this same universe.
+      spawnAllScopeIds = lib.unique (
+        builtins.attrNames mergedScopeParent ++ builtins.attrNames parentState.scopedRoutes
+      );
+
+      # Isolation-BLIND subtree membership rooted at spawnRoot, over the merged
+      # parent DAG. `isolated = {}` is passed EXPLICITLY (documented invariant:
+      # isolated entities resolve via resolve.to in the host pipeline,
+      # never through spawnNode, so no isolated descendant can appear under
+      # spawnRoot). Used ONLY for the parentSubtreeRoutes filter; the final
+      # extraction's identical blind walk happens inside assembleSpawnSubtree
+      # (Π.isolationMode = "blind"), both over spawnAllScopeIds — one shared walk.
+      subtreeSet = lib.genAttrs (subtreeScopes {
+        scopeParent = mergedScopeParent;
+        isolated = { };
+        root = spawnRoot;
+        allScopeIds = spawnAllScopeIds;
+      }) (_: true);
+
+      # DELIBERATE: parent-pipeline routes sourced inside the spawned
+      # subtree MUST re-apply — the spawn re-emits class content at the same scope
+      # ids but never re-fires schema policies, so without them a user-schema route
+      # (homeLinux->homeManager) never fires and the content drops. This is the
+      # `mergedSpawnRoutes` edge-identity dedup: the spawn's OWN route edges win
+      # over parent-subtree route edges with the same routeKey identity (an
+      # aspect-borne route can register in both pipelines; a duplicated path != []
+      # simple route would re-nest content in fresh keyless wrappers and conflict
+      # at the target). Order/precedence preserved exactly: freshParent (parent
+      # routes whose key ∉ spawn keys) ++ spawnHere.
       spawnRoutes = result.state.scopedRoutes null;
-      parentSubtreeRoutes = lib.filterAttrs (sid: _: isInSubtree sid) parentState.scopedRoutes;
+      parentSubtreeRoutes = lib.filterAttrs (sid: _: subtreeSet ? ${sid}) parentState.scopedRoutes;
       mergedSpawnRoutes =
         spawnRoutes
         // lib.mapAttrs (
@@ -137,29 +162,35 @@ in
           freshParent ++ spawnHere
         ) parentSubtreeRoutes;
 
-      phase3 =
-        applyRoutes selfRef parentState.ctx augmented spawnRoot mergedScopeParent mergedSpawnRoutes
-          phase2;
-
-      # Restrict extraction to the spawned subtree (spawnRoot + descendants).
-      # phase3.classImports aggregates across ALL merged scopes — including the
-      # host and SIBLING user scopes (the pipe-collection peers, and other users
-      # on the same host) — so reading it directly would leak a peer user's
-      # homeManager content into this node. The fleet pipe values still resolve
-      # correctly because assemblePipes ran over the full merged state; only the
-      # final per-scope class buckets are subtree-restricted here.
-      isInSubtree =
-        sid:
-        sid == spawnRoot
-        || (
-          let
-            parent = mergedScopeParent.${sid} or null;
-          in
-          parent != null && parent != sid && isInSubtree parent
-        );
-      subtreeScopes = builtins.filter isInSubtree (builtins.attrNames phase3.perScope);
+      # The spawn's provides + routes fold + isolation-BLIND, dedup-FREE final
+      # extraction, expressed over the edge machinery (materializeUnified inside
+      # assembleSpawnSubtree). wrapPerScope is forwarded (injection seam preserved —
+      # no resolve.nix import cycle); the inline phase1/phase2/phase3 + subtree
+      # concat dissolved into one entry. The fold aggregates across ALL merged
+      # scopes (host + sibling users), so the extraction is subtree-restricted via
+      # Π.allScopeIds + isolationMode="blind" to avoid leaking a peer user's
+      # content; fleet pipe values still resolve correctly because assemblePipes ran
+      # over the full merged state before the fold.
     in
-    {
-      imports = lib.concatMap (sid: phase3.perScope.${sid}.${class} or [ ]) subtreeScopes;
+    # The self-parent assert is forced via `augmented` (which the fold reads),
+    # matching the prior inline form's laziness: the throw surfaces only when this
+    # node's content is actually collected, not at attrset construction.
+    assembleSpawnSubtree {
+      inherit
+        class
+        spawnRoot
+        mergedScopeParent
+        mergedScopeIsolated
+        mergedSpawnRoutes
+        selfRef
+        wrapPerScope
+        ;
+      ctx = parentState.ctx;
+      inherit augmented;
+      inherit mergedClassImports;
+      # Merged parent + spawned entity kinds — the surfaced edges' scopeName map.
+      scopeEntityKind = parentState.scopeEntityKind // ((result.state.scopeEntityKind or (_: { })) null);
+      ownProvides = result.state.scopedProvides null;
+      allScopeIds = spawnAllScopeIds;
     };
 }
