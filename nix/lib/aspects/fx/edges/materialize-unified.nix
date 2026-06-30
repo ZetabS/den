@@ -110,6 +110,7 @@ let
         scopeContexts
         scopeParent
         scopeIsolated
+        scopeEntityKind
         ;
       # Stable scope name for the trace-edge construction (ordering only).
       name = den.lib.aspects.fx.edges.edge.scopeName {
@@ -176,6 +177,7 @@ let
               rootScopeId
               scopeContexts
               scopeParent
+              scopeEntityKind
               spawnNode
               buildForwardAspect
               ;
