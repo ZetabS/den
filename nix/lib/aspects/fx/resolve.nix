@@ -74,13 +74,14 @@ let
   # complex-route forward SOURCE with full fleet visibility (replaces the old
   # isolated fxResolve fallback).
   applyRoutes =
-    spawnNode: ctx: scopeContexts: rootScopeId: scopeParent: scopeIsolated: scopedRoutes: acc:
+    spawnNode: ctx: scopeContexts: rootScopeId: scopeParent: scopeIsolated: scopeEntityKind: scopedRoutes: acc:
     routeEdges.applyRoutes {
       inherit
         scopedRoutes
         scopeContexts
         scopeParent
         scopeIsolated
+        scopeEntityKind
         rootScopeId
         spawnNode
         ;
@@ -983,6 +984,7 @@ let
           oraclePhase2 = applyProvidesEdges ctx scopedProvides phase1;
           oraclePhase3 =
             applyRoutes spawnNode ctx augmentedScopeContexts result.state.rootScopeId scopeParent scopeIsolated
+              scopeEntityKind
               scopedRoutes
               oraclePhase2;
         in

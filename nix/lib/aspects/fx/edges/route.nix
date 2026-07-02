@@ -31,6 +31,7 @@ let
     synthesize
     rootTarget
     ;
+  inherit (import ./spawn-context.nix { inherit lib; }) mkSourceScopeBindings;
   inherit (import ../scope-walk.nix { inherit lib; }) subtreeScopes;
 
   # ===== materialization mechanics (ported from route/wrap.nix) ==========
@@ -579,7 +580,7 @@ let
   # edges here would double-count the same delivery. Only the drain-fold spawn
   # (resolve.nix mkDrained) surfaces edges into unifiedEdges.
   resolveSourceFallback =
-    spec: spawnNode: scopeParent:
+    spec: spawnNode: scopeParent: scopeContexts: scopeEntityKind:
     if !(spec ? sourceAspect) || spawnNode == null || !(spec ? sourceScopeId) then
       [ ]
     else
@@ -587,7 +588,10 @@ let
         from = scopeParent.${spec.sourceScopeId} or spec.sourceScopeId;
         class = spec.fromClass;
         aspect = den.lib.aspects.normalizeRoot spec.sourceAspect;
-        bindings = { };
+        bindings = mkSourceScopeBindings {
+          inherit scopeContexts scopeEntityKind;
+          sourceScopeId = spec.sourceScopeId;
+        };
       }).imports;
 
   # Append synthesized modules to a class bucket at a scope (flat + perScope).
@@ -615,6 +619,7 @@ let
       rootScopeId,
       scopeContexts,
       scopeParent,
+      scopeEntityKind,
       spawnNode,
       buildForwardAspect,
     }:
@@ -625,7 +630,7 @@ let
         if collectedSource != [ ] then
           collectedSource
         else
-          resolveSourceFallback spec spawnNode scopeParent;
+          resolveSourceFallback spec spawnNode scopeParent scopeContexts scopeEntityKind;
       sourceModule = spec.mapModule { imports = sourceModules; };
       newMods = collectClassMods spec.intoClass (buildForwardAspect spec sourceModule);
     in
@@ -706,6 +711,7 @@ let
       scopeParent ? { },
       scopeIsolated ? { },
       scopeContexts ? { },
+      scopeEntityKind,
       spawnNode ? null,
       rootScopeId ? null,
       buildForwardAspect ? null,
@@ -723,6 +729,7 @@ let
               rootScopeId
               scopeContexts
               scopeParent
+              scopeEntityKind
               spawnNode
               buildForwardAspect
               ;
